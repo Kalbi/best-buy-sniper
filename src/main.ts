@@ -29,24 +29,24 @@ const main = async () => {
   try {
     do {
       purchaseCompleted = await bestbuy.purchaseProduct();
-  
+
       if (!purchaseCompleted) {
-        const waitTime = random(10000, 30000);
-  
+        const waitTime = random(30000, 60000);
+
         logger.warn(`Purchase not completed, waiting ${waitTime} ms before retrying`);
-  
+
         await wait(waitTime);
       }
     } while (!purchaseCompleted);
-  
+
     logger.info('Shutting down in 1 minute');
-  
+
     await Promise.all([
       await sendDiscordMessage({ message: 'Shutting down in 1 minute' }),
     ]);
-  
+
     await wait(60000);
-    
+
     await bestbuy.close();
 
     return true;
@@ -79,9 +79,9 @@ pm2.connect(async (error) => {
       logger.error(error);
 
       if (error.message === 'Browser is considered a bot, aborting attempt') {
-        logger.warn('Waiting 3 minutes to refresh bot status');
+        logger.warn('Waiting 10 minutes to refresh bot status');
 
-        await wait(180000);
+        await wait(600000);
       }
     }
   } while (!finished);
