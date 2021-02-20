@@ -1,7 +1,7 @@
 import { getBrowser } from '@driver/index';
 import { Browser, BrowserContext, Page } from 'playwright';
 import { find, get } from 'lodash';
-import { CustomerInformation, getCustomerInformation, getPaymentInformation, PaymentInformation } from '@core/configs';
+import { CustomerInformation, getCustomerInformation, getPaymentInformation, PaymentInformation, getLoginInformation, LoginInformation } from '@core/configs';
 import { logger } from '@core/logger';
 import { resolve } from 'path';
 import { sendMessage as sendDiscordMessage } from '@core/notifications/discord';
@@ -40,13 +40,14 @@ export class BestBuy {
   async open(): Promise<Page> {
     this.context = await this.browser.newContext({
       permissions: [],
+      userAgent: "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/78.0.3904.108 Safari/537.36",
     });
     this.page = await this.context.newPage();
 
     return this.page;
   }
 
-  async close(): Promise<void> {  
+  async close(): Promise<void> {
     await this.page?.close();
     await this.context?.close();
 
@@ -65,8 +66,8 @@ export class BestBuy {
         await this.validateProductMatch(product);
         await this.addToCart(product);
         await this.checkout();
-        await this.continueAsGuest();
-        await this.submitGuestOrder();
+        await this.continueAsUser();
+        await this.submitLoggedInOrder();
 
         return true;
       } catch (error) {
@@ -204,7 +205,7 @@ export class BestBuy {
           shippingSelected = true;
         } catch (error) {
           attempt += 1;
-  
+
           if (attempt > 3) throw new Error("Can't select shipping, aborting attempt");
         }
       } while(!shippingSelected);
@@ -224,7 +225,7 @@ export class BestBuy {
     await this.clickCheckoutButton();
 
     try {
-      await page.waitForSelector('.cia-guest-content .js-cia-guest-button', { timeout: 10000 });
+      await page.waitForSelector('.cia-content .btn', { timeout: 10000 });
 
       logger.info('Checkout successful, starting order placement');
     } catch (error) {
@@ -295,6 +296,101 @@ export class BestBuy {
     await page.click('.cia-guest-content .js-cia-guest-button');
 
     await page.waitForSelector('.checkout__container .fulfillment');
+  }
+
+  private async continueAsUser() {
+    const page = await this.getPage();
+
+    logger.info('Signing in using credentials');
+
+    const loginInformation = getLoginInformation();
+
+    await this.completeLoginInformation(loginInformation);
+
+    await page.click('.cia-content .btn');
+
+    await page.waitForSelector('.credit-card-form__cvv-label-wrap');
+  }
+
+  private async submitLoggedInOrder() {
+    const page = await this.getPage();
+    const paymentInformation = getPaymentInformation();
+    const customerInformation = getCustomerInformation();
+
+    logger.info('Started order information completion');
+
+    await this.completePaymentInformationLoggedIn(paymentInformation);
+
+    await page.screenshot({
+      path: resolve(`screenshots/${Date.now()}_checkout-page-completed.png`),
+      type: 'png',
+      fullPage: true
+    });
+
+    logger.info('Performing last validation before placing order...');
+
+    const placeOrderButton = await page.$('.button--place-order-fast-track button.btn.btn-lg.btn-block.btn-primary.button__fast-track');
+
+    const totalContainer = await page.$('.order-summary__price > span');
+    const totalContainerTextContent = await totalContainer?.textContent();
+    const parsedTotal = totalContainerTextContent ? parseFloat(totalContainerTextContent.replace('$', '')) : 0;
+
+    if (parsedTotal === 0 || parsedTotal > customerInformation.budget)
+      throw new Error('Total amount does not seems right, aborting');
+
+    logger.info('Placing order...');
+
+    const placingOrderScreenshotPath = resolve(`screenshots/${Date.now()}_placing-order.png`);
+
+    await page.screenshot({
+      path: placingOrderScreenshotPath,
+      type: 'png',
+      fullPage: true
+    });
+
+    await Promise.all([
+      sendDiscordMessage({ message: `Placing order...`, image: placingOrderScreenshotPath }),
+    ]);
+
+    if (existsSync('purchase.json')) {
+      logger.warn('Purchase already completed, ending process');
+
+      process.exit(2);
+    }
+
+    // *** UNCOMMENT THIS SECTION TO ENABLE AUTO-CHECKOUT ***
+
+    if (!!placeOrderButton) {
+      await page.click('.button--place-order-fast-track button.btn.btn-lg.btn-block.btn-primary.button__fast-track');
+    }
+
+    await wait(3000);
+
+    logger.info('Order placed!');
+
+    if (!existsSync('purchase.json')) writeFileSync('purchase.json', '{}');
+
+    const orderPlacedScreenshotPath = resolve(`screenshots/${Date.now()}_order-placed-1.png`);
+
+    await page.screenshot({
+      path: orderPlacedScreenshotPath,
+      type: 'png',
+      fullPage: true
+    });
+
+    await Promise.all([
+      sendDiscordMessage({ message: `Order placed!`, image: orderPlacedScreenshotPath }),
+    ]);
+
+    await wait(3000);
+
+    await page.screenshot({
+      path: resolve(`screenshots/${Date.now()}_order-placed-2.png`),
+      type: 'png',
+      fullPage: true
+    });
+
+    await wait(14000);
   }
 
   private async submitGuestOrder() {
@@ -432,6 +528,17 @@ export class BestBuy {
     logger.info('Contact information completed');
   }
 
+  private async completeLoginInformation(loginInformation: LoginInformation) {
+    const page = await this.getPage();
+
+    logger.info('Filling login information...');
+
+    await page.type('[id="fld-e"]', loginInformation.email);
+    await page.type('[id="fld-p1"]', loginInformation.password);
+
+    logger.info('Login information completed');
+  }
+
   private async completePaymentInformation(paymentInformation: PaymentInformation) {
     const page = await this.getPage();
 
@@ -448,6 +555,17 @@ export class BestBuy {
     await page.type('[id="payment.billingAddress.city"]', paymentInformation.city);
     await page.type('[id="payment.billingAddress.state"]', paymentInformation.state);
     await page.type('[id="payment.billingAddress.zipcode"]', paymentInformation.zipcode);
+
+    logger.info('Payment information completed');
+  }
+
+  private async completePaymentInformationLoggedIn(paymentInformation: PaymentInformation) {
+    const page = await this.getPage();
+
+    logger.info('Filling payment information for logged in user...');
+
+    await page.type('[id="credit-card-cvv"]', paymentInformation.cvv);
+    await page.check('#text-updates');
 
     logger.info('Payment information completed');
   }
