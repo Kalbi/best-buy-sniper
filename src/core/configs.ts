@@ -2,6 +2,7 @@ import productionTasks from '@config/prod/tasks.json';
 import productionCustomerInformation from '@config/prod/customer.json';
 import productionPaymentInformation from '@config/prod/payment.json';
 import productionNotificationsInformation from '@config/prod/notifications.json';
+import productionLoginInformation from '@config/prod/login.json';
 
 export interface CustomerInformation {
   address: string;
@@ -29,6 +30,11 @@ export interface PaymentInformation {
   zipcode: string;
 }
 
+export interface LoginInformation {
+  email: string;
+  password: string;
+}
+
 export const getTasks = () => {
   return productionTasks;
 };
@@ -39,6 +45,10 @@ export const getCustomerInformation = (): CustomerInformation => {
 
 export const getPaymentInformation = (): PaymentInformation => {
   return productionPaymentInformation;
+};
+
+export const getLoginInformation = (): LoginInformation => {
+  return productionLoginInformation;
 };
 
 export const getNotificationsInformation = (): any => {
